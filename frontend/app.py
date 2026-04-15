@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 from datetime import datetime
 
-st.set_page_config(page_title="Plant Tracker Pro", page_icon="🌿", layout="wide")
+st.set_page_config(page_title="Plant Tracker", page_icon="🌿", layout="wide")
 
 # --- CONFIGURATION ---
 API_URL = "http://backend:8000"
@@ -17,10 +17,24 @@ st.markdown("""
     .harv-btn button[kind="primary"] { background-color: #FF4B4B !important; color: white !important; border: 2px solid #FF4B4B !important; }
     .prun-btn button[kind="primary"] { background-color: #2E8B57 !important; color: white !important; border: 2px solid #2E8B57 !important; }
     .fert-btn button[kind="primary"] { background-color: #8A2BE2 !important; color: white !important; border: 2px solid #8A2BE2 !important; }
-    div.stButton > button { width: 100% !important; padding: 0px !important; font-weight: bold; }
+    div.stButton > button { width: 100% !important; font-weight: bold; border: 0px; }
     .stImage img { border-radius: 10px; }
     /* Ajustement pour coller le formulaire au container */
     .stForm { border: none !important; padding: 0 !important; }
+    /* Ciblage ultra-précis des cellules d'images dans le canvas Streamlit */
+    div[data-testid="stDataFrame"] table img, 
+    div[data-testid="stTable"] table img,
+    .st-emotion-cache-1p6f546 img { 
+        object-fit: cover !important;
+        width: 50px !important;   /* Force une largeur fixe */
+        height: 50px !important;  /* Force la même hauteur */
+        aspect-ratio: 1 / 1 !important;
+        border-radius: 8px !important;
+    }
+    /* Ajustement de la ligne pour que le carré ne soit pas écrasé */
+    [data-testid="stDataFrame"] [role="gridcell"] {
+        vertical-align: center !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,7 +49,7 @@ def api_delete(path): requests.delete(f"{API_URL}{path}")
 
 @st.dialog("Zoom Photo")
 def show_full_photo(url, date):
-    st.image(url, use_container_width=True)
+    st.image(url, width="stretch")
     st.write(f"📅 Photo du : **{date}**")
 
 # --- ÉTAT DE SESSION ---
@@ -51,7 +65,7 @@ if "is_vegetable" not in st.session_state: st.session_state.is_vegetable = False
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🍀 Menu")
-    if st.button("📋 Ma Collection"):
+    if st.button("📋 Mes Plantes"):
         st.session_state.view = "list"
         st.rerun()
     if st.button("🔍 Recherche Avancée"):
@@ -89,8 +103,46 @@ if st.session_state.view == "settings":
 elif st.session_state.view == "list":
     st.title("🌿 Ma Collection")
     plants = api_get("/plants/")
+
     if plants:
-        event = st.dataframe(plants, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        import pandas as pd
+        df = pd.DataFrame(plants)
+
+        # --- ÉTAPE CLÉ : RÉORGANISATION ---
+        # On définit l'ordre exact ici. Les colonnes non listées seront à la fin.
+        cols_order = ["image_url", "name_fr", "location_type", "container"]
+        # On ne garde que les colonnes qui existent vraiment dans le DF
+        existing_cols = [c for c in cols_order if c in df.columns]
+        other_cols = [c for c in df.columns if c not in existing_cols]
+        df = df[existing_cols + other_cols]
+
+        column_configuration = {
+            "image_url": st.column_config.ImageColumn("Aperçu", width="medium"),
+            "name_fr": "Nom Commun",
+            "name_sci": "Nom Scientifique",
+            "name_en": "Nom Anglais",
+            "location_type": "Int/Ext",
+            "container": "Contenant",
+            "hardiness": "Rusticité",
+            "height": "Hauteur",
+            "location_zone": "Zone",
+            "flowering_months": "Floraison",
+            "harvest_months": "Récolte",
+            "pruning_months": "Taille",
+            "fertilizing_months": "Engrais",
+            "id": None, "main_photo": None # On cache le reste
+        }
+
+        # Affichage du tableau avec les photos
+        event = st.dataframe(
+            df, 
+            column_config=column_configuration,
+            width="stretch", 
+            hide_index=True, 
+            on_select="rerun", 
+            selection_mode="single-row"
+        )
+
         if event.selection.rows:
             sel = plants[event.selection.rows[0]]
             st.session_state.selected_plant = sel
@@ -118,10 +170,10 @@ elif st.session_state.view == "search":
         with col2:
             s_cont = st.selectbox("Contenant", ["Tous"] + [o['value'] for o in api_get("/settings/container")])
             # Filtre par mois
-            s_flow = st.selectbox("🌸 En floraison en...", ["Tous"] + MONTHS)
-            s_harv = st.selectbox("🍎 À récolter en...", ["Tous"] + MONTHS)
-            s_fert = st.selectbox("🍎 À fertiliser en...", ["Tous"] + MONTHS)
-            s_prun = st.selectbox("🍎 À tailler en...", ["Tous"] + MONTHS)
+            s_flow = st.selectbox("🌸 Floraison en...", ["Tous"] + MONTHS)
+            s_harv = st.selectbox("🍎 Récolte en...", ["Tous"] + MONTHS)
+            s_fert = st.selectbox("🍎 Engrais en...", ["Tous"] + MONTHS)
+            s_prun = st.selectbox("🍎 Tailler en...", ["Tous"] + MONTHS)
             
         with col3:
             st.write("💡 **Astuce**")
@@ -153,6 +205,7 @@ elif st.session_state.view == "search":
                 "Latin": r['name_sci'],
                 "Type": r['location_type'],
                 "Lieu": r['location_detail'],
+                "Contenant": r['container'],
                 "Floraison": r['flowering_months'],
                 "Récolte": r['harvest_months'],
                 "Engrais": r['fertilizing_months'],
@@ -161,7 +214,7 @@ elif st.session_state.view == "search":
             
         event = st.dataframe(
             display_df, 
-            use_container_width=True, 
+            width="stretch", 
             hide_index=True, 
             on_select="rerun", 
             selection_mode="single-row"
@@ -193,7 +246,7 @@ elif st.session_state.view in ["add", "edit"]:
         photos = api_get(f"/plants/{sel['id']}/photos/")
         main_p = next((p for p in photos if p['is_main']), None)
         with h1:
-            if main_p: st.image(f"{IMG_URL_BASE}/uploads/{main_p['path'].split('/')[-1]}", use_container_width=True)
+            if main_p: st.image(f"{IMG_URL_BASE}/uploads/{main_p['path'].split('/')[-1]}", width="stretch")
         with h2: st.title(sel.get('name_fr', "Fiche Plante"))
     else: st.title("➕ Nouvelle Plante")
 
@@ -293,15 +346,20 @@ elif st.session_state.view in ["add", "edit"]:
             for idx, p in enumerate(photos):
                 with p_cols[idx % 4]:
                     url = f"{IMG_URL_BASE}/uploads/{p['path'].split('/')[-1]}"
-                    st.image(url, use_container_width=True)
+                    st.image(url, width="stretch")
                     b1, b2, b3 = st.columns(3)
                     with b1:
                         if st.button("🔍", key=f"z_{p['id']}"): show_full_photo(url, p['upload_date'])
                     with b2:
                         if not p['is_main'] and st.button("⭐", key=f"s_{p['id']}"):
-                            requests.put(f"{API_URL}/photos/{p['id']}/main?plant_id={sel['id']}")
-                            st.rerun()
-                        elif p['is_main']: st.write("🌟")
+                            target_url = f"{API_URL}/photos/{p['id']}/main?plant_id={sel['id']}"
+                            response = requests.put(target_url)
+                            if response.status_code == 200:
+                                 st.rerun() # Crucial pour rafraîchir l'affichage
+                            else:
+                                st.error("Erreur lors de la mise à jour")
+                        elif p['is_main']:
+                            st.write("🌟")
                     with b3:
                         if st.button("🗑️", key=f"d_{p['id']}"):
                             api_delete(f"/photos/{p['id']}")
