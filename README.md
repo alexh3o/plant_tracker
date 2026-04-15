@@ -39,3 +39,28 @@ Une application complète et intuitive pour gérer votre collection de plantes, 
    ```bash
    git clone [https://github.com/votre-utilisateur/plant-tracker.git](https://github.com/votre-utilisateur/plant-tracker.git)
    cd plant-tracker
+
+ 
+2. **Lancer avec Docker** :
+   ```bash
+   docker-compose up --build
+
+3. **Accès** :
+- Interface utilisateur : http://localhost:8501
+- Documentation API : http://localhost:8000/docs
+
+## 📊 Structure du Projet
+.
+├── backend/
+│   ├── main.py          # API FastAPI & Gestion DB
+│   └── uploads/         # Stockage persistant des images
+├── frontend/
+│   └── app.py           # Interface Streamlit
+└── docker-compose.yml   # Orchestration des services
+
+## 📥 Import / Export
+L'application permet d'exporter l'intégralité de votre base au format CSV (compatible Excel avec encodage UTF-8) et de la réimporter facilement, garantissant la portabilité de vos données.
+
+---
+
+Développé avec ❤️ pour les amoureux de la nature.
