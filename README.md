@@ -51,13 +51,13 @@ Une application complète et intuitive pour gérer votre collection de plantes, 
 
 ## 📊 Structure du Projet
 
-.
-├── backend/
-│   ├── main.py          # API FastAPI & Gestion DB
-│   └── uploads/         # Stockage persistant des images
-├── frontend/
-│   └── app.py           # Interface Streamlit
-└── docker-compose.yml   # Orchestration des services
+ .
+ ├── backend/
+ │   ├── main.py          # API FastAPI & Gestion DB
+ │   └── uploads/         # Stockage persistant des images
+ ├── frontend/
+ │   └── app.py           # Interface Streamlit
+ └── docker-compose.yml   # Orchestration des services
 
 ## 📥 Import / Export
 L'application permet d'exporter l'intégralité de votre base au format CSV (compatible Excel avec encodage UTF-8) et de la réimporter facilement, garantissant la portabilité de vos données.
