@@ -1,12 +1,15 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from PIL import Image, ImageOps
 import sqlite3
 import os
 import shutil
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Configuration CORS pour Streamlit
 app.add_middleware(
@@ -89,12 +92,30 @@ init_db()
 
 # --- ROUTES ---
 
-@app.get("/plants/", response_model=List[Plant])
+@app.get("/plants/")
 def list_plants():
     conn = get_db()
-    plants = conn.execute("SELECT * FROM plants").fetchall()
-    conn.close()
-    return [dict(p) for p in plants]
+    # L'alias 'main_photo' est OBLIGATOIRE ici pour que d['main_photo'] fonctionne
+    query = """
+        SELECT p.*, ph.thumb_path as main_photo
+        FROM plants p 
+        LEFT JOIN photos ph ON p.id = ph.plant_id AND ph.is_main = 1
+    """
+    try:
+        plants = conn.execute(query).fetchall()
+        results = []
+        for p in plants:
+            d = dict(p)
+            # Sécurité : on vérifie si la clé existe avant de l'utiliser
+            if d.get('main_photo'):
+                filename = d['main_photo'].split('/')[-1]
+                d['image_url'] = f"http://192.168.1.105:8000/uploads/{filename}"
+            else:
+                d['image_url'] = None
+            results.append(d)
+        return results
+    finally:
+        conn.close()
 
 @app.post("/plants/")
 def add_plant(p: Plant):
@@ -134,6 +155,7 @@ def update_plant(plant_id: int, p: Plant):
 def search_plants(
     name: Optional[str]=None,
     location_type: Optional[str]=None,
+    container: Optional[str]=None,
     flowering_month: Optional[str]=None,
     harvest_month: Optional[str]=None,
     pruning_month: Optional[str]=None,
@@ -150,6 +172,15 @@ def search_plants(
     if location_type:
         query += " AND location_type = ?"
         params.append(location_type)
+    if is_fruit:
+        query += " AND is_fruit = ?"
+        params.append(is_fruit)
+    if is_vegetable:
+        query += " AND is_vegetable = ?"
+        params.append(is_vegetable)
+    if container:
+        query += " AND container = ?"
+        params.append(container)
     if flowering_month:
         query += " AND flowering_months LIKE ?"
         params.append(f"%{flowering_month}%")
@@ -175,6 +206,37 @@ def search_plants(
 
 # --- ROUTES PHOTOS & SETTINGS (Gardées telles quelles) ---
 
+# --- FONCTION UTILITAIRE POUR LE CROP CARRÉ ---
+def create_square_thumbnail(source_path, size=(300, 300)):
+    """Crée une version carrée centrée de l'image."""
+    with Image.open(source_path) as img:
+        # ImageOps.fit gère le crop centré automatiquement pour remplir le carré
+        thumbnail = ImageOps.fit(img, size, Image.Resampling.LANCZOS)
+        
+        # On définit le nom du fichier miniature : "photo_thumb.jpg"
+        ext = source_path.split('.')[-1]
+        base_path = source_path.rsplit('.', 1)[0]
+        thumb_path = f"{base_path}_thumb.{ext}"
+        
+        thumbnail.save(thumb_path)
+        return thumb_path
+
+@app.put("/photos/{photo_id}/main")
+def set_main_photo(photo_id: int, plant_id: int):
+    conn = get_db()
+    try:
+        # 1. On remet tout à zéro pour cette plante
+        conn.execute("UPDATE photos SET is_main = 0 WHERE plant_id = ?", (plant_id,))
+        # 2. On définit la nouvelle photo principale
+        conn.execute("UPDATE photos SET is_main = 1 WHERE id = ?", (photo_id,))
+        conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 @app.get("/plants/{plant_id}/photos/")
 def get_photos(plant_id: int):
     conn = get_db()
@@ -183,16 +245,63 @@ def get_photos(plant_id: int):
     return [dict(p) for p in photos]
 
 @app.post("/plants/{plant_id}/photos/")
-async def add_photo(plant_id: int, file: UploadFile = File(...), date: str = Form(...)):
-    path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+async def add_photo(plant_id: int, file: UploadFile = File(...)):
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        buffer.write(await file.read())
+    
+    # CRÉATION DE LA MINIATURE CARRÉE
+    try:
+        thumb_path = create_square_thumbnail(file_path)
+    except Exception as e:
+        print(f"Erreur thumbnail: {e}")
+        thumb_path = file_path # Repli sur l'original si échec
+
     conn = get_db()
-    conn.execute("INSERT INTO photos (plant_id, path, upload_date, is_main) VALUES (?,?,?,?)",
-                 (plant_id, path, date, False))
+    # On ajoute thumb_path dans une nouvelle colonne ou on l'utilise pour la liste
+    conn.execute(
+        "INSERT INTO photos (plant_id, path, thumb_path, is_main) VALUES (?, ?, ?, 0)",
+        (plant_id, file_path, thumb_path)
+    )
     conn.commit()
     conn.close()
-    return {"status": "uploaded"}
+    return {"status": "Photo ajoutée"}
+
+@app.delete("/photos/{photo_id}")
+def delete_photo(photo_id: int):
+    conn = get_db()
+    # 1. On récupère les chemins des deux fichiers avant de supprimer l'entrée
+    photo = conn.execute(
+        "SELECT path, thumb_path FROM photos WHERE id = ?", 
+        (photo_id,)
+    ).fetchone()
+    
+    if not photo:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Photo non trouvée")
+
+    try:
+        # 2. Suppression de la base de données
+        conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+        conn.commit()
+
+        # 3. Suppression physique des fichiers sur le disque
+        # On supprime l'original
+        if photo['path'] and os.path.exists(photo['path']):
+            os.remove(photo['path'])
+        
+        # On supprime la miniature carrée (le thumb)
+        if photo['thumb_path'] and os.path.exists(photo['thumb_path']):
+            os.remove(photo['thumb_path'])
+
+        return {"status": "success", "message": "Fichiers et entrée supprimés"}
+    
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Erreur suppression: {str(e)}")
+    finally:
+        conn.close()
+
 
 @app.get("/settings/{category}")
 def get_settings(category: str):
