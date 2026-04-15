@@ -50,6 +50,7 @@ Une application complète et intuitive pour gérer votre collection de plantes, 
 - Documentation API : http://localhost:8000/docs
 
 ## 📊 Structure du Projet
+
 .
 ├── backend/
 │   ├── main.py          # API FastAPI & Gestion DB
