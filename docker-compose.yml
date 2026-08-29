@@ -1,15 +1,21 @@
 services:
   backend:
     build: ./backend
+    restart: unless-stopped
     ports:
       - 8000:8000
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads
+    environment:
+      - HOST_URL=http://${HOST_IP}:8000
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - 8501:8501
     depends_on:
       - backend
+    environment:
+      - IMG_URL_BASE=http://${HOST_IP}:8000
 networks: {}
